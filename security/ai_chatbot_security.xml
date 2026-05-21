@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- ================================================================
+         Record rules: users see only their own sessions and messages.
+         base.group_system (admin) sees everything.
+    ================================================================ -->
+
+    <record id="ai_chat_session_rule_own" model="ir.rule">
+        <field name="name">AI Chat Session: own records</field>
+        <field name="model_id" ref="ai_chatbot_widget.model_ai_chat_session"/>
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+
+    <record id="ai_chat_message_rule_own" model="ir.rule">
+        <field name="name">AI Chat Message: own records</field>
+        <field name="model_id" ref="ai_chatbot_widget.model_ai_chat_message"/>
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+
+    <!-- Admin sees all -->
+    <record id="ai_chat_session_rule_admin" model="ir.rule">
+        <field name="name">AI Chat Session: admin sees all</field>
+        <field name="model_id" ref="ai_chatbot_widget.model_ai_chat_session"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+
+    <record id="ai_chat_message_rule_admin" model="ir.rule">
+        <field name="name">AI Chat Message: admin sees all</field>
+        <field name="model_id" ref="ai_chatbot_widget.model_ai_chat_message"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+</odoo>

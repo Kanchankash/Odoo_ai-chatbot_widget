@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="ai_chatbot_widget.ChartRenderer">
+        <div class="o_chatbot_chart_container">
+            <canvas t-ref="canvas"/>
+        </div>
+    </t>
+</templates>

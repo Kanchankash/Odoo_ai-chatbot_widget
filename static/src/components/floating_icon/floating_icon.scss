@@ -1,0 +1,42 @@
+.o_chatbot_fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: var(--o-brand-primary, #875a7b);
+    color: #fff;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    z-index: 1060;
+
+    i {
+        font-size: 22px;
+    }
+
+    &:hover {
+        transform: scale(1.08);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+    }
+
+    &:active {
+        transform: scale(0.96);
+    }
+}
+
+.o_chatbot_fab_badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 12px;
+    height: 12px;
+    background-color: #e34a33;
+    border-radius: 50%;
+    border: 2px solid #fff;
+}

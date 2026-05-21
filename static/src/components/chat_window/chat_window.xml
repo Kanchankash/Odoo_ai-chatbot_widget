@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="ai_chatbot_widget.ChatWindow">
+        <div class="o_chatbot_window"
+             t-att-class="{
+                 'o_chatbot_window--minimized': state.isMinimized,
+                 'o_chatbot_window--expanded': state.isExpanded
+             }">
+
+            <!-- Header -->
+            <div class="o_chatbot_header" t-on-dblclick="onHeaderDblClick">
+                <div class="o_chatbot_header_title">
+                    <i class="fa fa-robot me-1" aria-hidden="true"/>
+                    AI Assistant
+                    <t t-if="state.isStreaming">
+                        <span class="o_chatbot_typing_dot ms-2"/>
+                    </t>
+                </div>
+                <div class="o_chatbot_header_actions">
+                    <!-- New chat -->
+                    <button class="o_chatbot_btn_icon" t-on-click="onNewChat" title="New Chat">
+                        <i class="fa fa-plus" aria-hidden="true"/>
+                    </button>
+
+                    <!-- Minimize -->
+                    <button class="o_chatbot_btn_icon"
+                            t-on-click="onMinimize"
+                            t-att-title="state.isMinimized ? 'Restore' : 'Minimize'">
+                        <i t-att-class="state.isMinimized ? 'fa fa-window-restore' : 'fa fa-minus'" aria-hidden="true"/>
+                    </button>
+
+                    <!-- Expand / Collapse -->
+                    <t t-if="!state.isMinimized">
+                        <button class="o_chatbot_btn_icon"
+                                t-on-click="onToggleExpand"
+                                t-att-title="state.isExpanded ? 'Collapse' : 'Expand'">
+                            <i t-att-class="state.isExpanded ? 'fa fa-compress' : 'fa fa-expand'" aria-hidden="true"/>
+                        </button>
+                    </t>
+
+                    <!-- Close -->
+                    <button class="o_chatbot_btn_icon o_chatbot_btn_close" t-on-click="onClose" title="Close">
+                        <i class="fa fa-times" aria-hidden="true"/>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Body (hidden when minimized) -->
+            <t t-if="!state.isMinimized">
+                <div class="o_chatbot_body">
+                    <!-- Sidebar -->
+                    <SidebarHistory/>
+
+                    <!-- Main area -->
+                    <div class="o_chatbot_main">
+                        <div class="o_chatbot_messages" t-ref="messages">
+                            <t t-if="state.messages.length === 0">
+                                <div class="o_chatbot_empty_state">
+                                    <i class="fa fa-comments-o" aria-hidden="true"/>
+                                    <p>Ask me anything about your Odoo data.</p>
+                                    <p class="text-muted small">Try: "Show confirmed sales this month as a bar chart"</p>
+                                </div>
+                            </t>
+                            <t t-foreach="state.messages" t-as="msg" t-key="msg.id">
+                                <MessageBubble message="msg"/>
+                            </t>
+                        </div>
+                        <Composer/>
+                    </div>
+                </div>
+            </t>
+        </div>
+    </t>
+</templates>

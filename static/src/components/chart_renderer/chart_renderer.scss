@@ -1,0 +1,12 @@
+.o_chatbot_chart_container {
+    margin-top: 10px;
+    max-width: 100%;
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #eee;
+
+    canvas {
+        max-height: 260px;
+    }
+}

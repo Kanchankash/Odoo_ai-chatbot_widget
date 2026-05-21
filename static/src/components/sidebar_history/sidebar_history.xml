@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="ai_chatbot_widget.SidebarHistory">
+        <div class="o_chatbot_sidebar">
+            <div class="o_chatbot_sidebar_header">
+                <span>History</span>
+                <button class="o_chatbot_sidebar_new" t-on-click="onNewChat" title="New chat">
+                    <i class="fa fa-plus" aria-hidden="true"/>
+                </button>
+            </div>
+
+            <div class="o_chatbot_sidebar_list">
+                <t t-foreach="state.sessions" t-as="session" t-key="session.id">
+                    <div class="o_chatbot_sidebar_item"
+                         t-att-class="{ 'o_chatbot_sidebar_item--active': session.id === state.currentSessionId }"
+                         t-on-click="() => this.onSelectSession(session.id)">
+
+                        <!-- Rename input -->
+                        <t t-if="localState.renamingId === session.id">
+                            <input class="o_chatbot_sidebar_rename_input"
+                                   t-model="localState.renameValue"
+                                   t-on-keydown="(ev) => this.onRenameKeydown(session.id, ev)"
+                                   t-on-click.stop=""
+                                   autofocus="true"/>
+                            <button class="o_chatbot_sidebar_action_btn"
+                                    t-on-click="(ev) => this.confirmRename(session.id, ev)"
+                                    title="Save">
+                                <i class="fa fa-check" aria-hidden="true"/>
+                            </button>
+                        </t>
+                        <t t-else="">
+                            <span class="o_chatbot_sidebar_name" t-esc="session.name or 'New Chat'"/>
+                            <div class="o_chatbot_sidebar_actions">
+                                <button class="o_chatbot_sidebar_action_btn"
+                                        t-on-click="(ev) => this.startRename(session, ev)"
+                                        title="Rename">
+                                    <i class="fa fa-pencil" aria-hidden="true"/>
+                                </button>
+                                <button class="o_chatbot_sidebar_action_btn"
+                                        t-on-click="(ev) => this.onArchive(session.id, ev)"
+                                        title="Archive">
+                                    <i class="fa fa-archive" aria-hidden="true"/>
+                                </button>
+                            </div>
+                        </t>
+                    </div>
+                </t>
+
+                <t t-if="state.sessions.length === 0">
+                    <div class="o_chatbot_sidebar_empty text-muted small p-2">No sessions yet</div>
+                </t>
+            </div>
+        </div>
+    </t>
+</templates>

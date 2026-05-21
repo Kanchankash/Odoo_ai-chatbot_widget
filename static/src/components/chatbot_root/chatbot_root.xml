@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <!-- Systray button -->
+    <t t-name="ai_chatbot_widget.ChatbotSystrayItem">
+        <div class="o_chatbot_systray_item" t-on-click="onClick" title="AI Assistant">
+            <i class="fa fa-comments-o" aria-hidden="true"/>
+            <t t-if="state.hasUnread">
+                <span class="o_chatbot_unread_dot"/>
+            </t>
+        </div>
+    </t>
+
+    <!-- Root wrapper -->
+    <t t-name="ai_chatbot_widget.ChatbotRoot">
+        <div class="o_chatbot_root">
+            <FloatingIcon/>
+            <t t-if="state.isOpen">
+                <ChatWindow/>
+            </t>
+        </div>
+    </t>
+
+</templates>

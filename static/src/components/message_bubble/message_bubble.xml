@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="ai_chatbot_widget.MessageBubble">
+        <div class="o_chatbot_msg" t-att-class="{
+                'o_chatbot_msg--user': isUser,
+                'o_chatbot_msg--assistant': isAssistant,
+                'o_chatbot_msg--error': message.isError,
+            }">
+
+            <div class="o_chatbot_msg_avatar">
+                <t t-if="isUser">
+                    <i class="fa fa-user" aria-hidden="true"/>
+                </t>
+                <t t-else="">
+                    <i class="fa fa-robot" aria-hidden="true"/>
+                </t>
+            </div>
+
+            <div class="o_chatbot_msg_body">
+                <t t-if="isStreaming and !message.content">
+                    <!-- Typing indicator -->
+                    <span class="o_chatbot_typing_caret">▌</span>
+                </t>
+                <t t-else="">
+                    <div class="o_chatbot_msg_content" t-out="renderedContent"/>
+                    <t t-if="isStreaming">
+                        <span class="o_chatbot_typing_caret">▌</span>
+                    </t>
+                </t>
+
+                <!-- Chart -->
+                <t t-if="chartSpec">
+                    <ChartRenderer config="chartSpec"/>
+                </t>
+            </div>
+        </div>
+    </t>
+</templates>

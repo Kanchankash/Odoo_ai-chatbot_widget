@@ -1,0 +1,41 @@
+.o_chatbot_systray_item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    color: inherit;
+
+    i {
+        font-size: 18px;
+    }
+
+    &:hover {
+        opacity: 0.8;
+    }
+}
+
+.o_chatbot_unread_dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    background-color: #e34a33;
+    border-radius: 50%;
+    border: 1px solid #fff;
+}
+
+.o_chatbot_root {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    z-index: 1060;
+    pointer-events: none;
+
+    > * {
+        pointer-events: all;
+    }
+}

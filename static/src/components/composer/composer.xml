@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="ai_chatbot_widget.Composer">
+        <div class="o_chatbot_composer">
+            <textarea
+                class="o_chatbot_composer_input"
+                t-ref="textarea"
+                t-att-value="localState.value"
+                t-on-input="onInput"
+                t-on-keydown="onKeydown"
+                placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
+                rows="1"
+            />
+            <div class="o_chatbot_composer_actions">
+                <t t-if="state.isStreaming">
+                    <button class="o_chatbot_composer_stop"
+                            t-on-click="stop"
+                            title="Stop generating">
+                        <i class="fa fa-stop-circle" aria-hidden="true"/>
+                    </button>
+                </t>
+                <button class="o_chatbot_composer_send"
+                        t-on-click="send"
+                        t-att-disabled="!localState.value.trim() ? '' : undefined"
+                        title="Send (Enter)">
+                    <i class="fa fa-paper-plane" aria-hidden="true"/>
+                </button>
+            </div>
+        </div>
+    </t>
+</templates>

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!-- List view — uses <list> not <tree> [ODOO 19] -->
+    <record id="ai_chat_session_list_view" model="ir.ui.view">
+        <field name="name">ai.chat.session.list</field>
+        <field name="model">ai.chat.session</field>
+        <field name="arch" type="xml">
+            <list string="Chat Sessions" default_order="last_activity desc">
+                <field name="name"/>
+                <field name="user_id"/>
+                <field name="state"/>
+                <field name="last_activity"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="ai_chat_session_form_view" model="ir.ui.view">
+        <field name="name">ai.chat.session.form</field>
+        <field name="model">ai.chat.session</field>
+        <field name="arch" type="xml">
+            <form string="Chat Session">
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="user_id"/>
+                        <field name="state"/>
+                        <field name="last_activity"/>
+                    </group>
+                    <notebook>
+                        <page string="Messages">
+                            <field name="message_ids" readonly="1">
+                                <list string="Messages" default_order="created_at asc">
+                                    <field name="created_at"/>
+                                    <field name="role"/>
+                                    <field name="content" string="Content"/>
+                                    <field name="tokens_in"/>
+                                    <field name="tokens_out"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="ai_chat_session_action" model="ir.actions.act_window">
+        <field name="name">Chat Sessions</field>
+        <field name="res_model">ai.chat.session</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{"search_default_open": 1}</field>
+    </record>
+
+    <record id="ai_chat_session_search_view" model="ir.ui.view">
+        <field name="name">ai.chat.session.search</field>
+        <field name="model">ai.chat.session</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="user_id"/>
+                <filter name="open" string="Open" domain="[('state','=','open')]"/>
+                <filter name="archived" string="Archived" domain="[('state','=','archived')]"/>
+            </search>
+        </field>
+    </record>
+
+    <!-- Menu -->
+    <menuitem
+        id="menu_ai_chatbot_root"
+        name="AI Chatbot"
+        sequence="90"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_ai_chat_sessions"
+        name="Sessions"
+        parent="menu_ai_chatbot_root"
+        action="ai_chat_session_action"
+        sequence="10"
+    />
+</odoo>

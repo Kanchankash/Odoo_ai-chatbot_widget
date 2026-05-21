@@ -1,0 +1,111 @@
+.o_chatbot_sidebar {
+    width: 200px;
+    min-width: 160px;
+    border-right: 1px solid #eee;
+    display: flex;
+    flex-direction: column;
+    background: #f9f9f9;
+    flex-shrink: 0;
+}
+
+.o_chatbot_sidebar_header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    border-bottom: 1px solid #eee;
+    flex-shrink: 0;
+}
+
+.o_chatbot_sidebar_new {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 13px;
+
+    &:hover {
+        background: #eee;
+        color: #333;
+    }
+}
+
+.o_chatbot_sidebar_list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 4px 0;
+}
+
+.o_chatbot_sidebar_item {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 6px;
+    margin: 2px 4px;
+    font-size: 12px;
+    gap: 4px;
+    min-height: 32px;
+
+    &:hover {
+        background: #ececec;
+
+        .o_chatbot_sidebar_actions {
+            opacity: 1;
+        }
+    }
+
+    &--active {
+        background: #e3d4ec;
+        font-weight: 600;
+    }
+}
+
+.o_chatbot_sidebar_name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.o_chatbot_sidebar_actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.1s;
+    flex-shrink: 0;
+}
+
+.o_chatbot_sidebar_action_btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1;
+
+    &:hover {
+        background: #ddd;
+        color: #333;
+    }
+}
+
+.o_chatbot_sidebar_rename_input {
+    flex: 1;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 12px;
+    outline: none;
+
+    &:focus {
+        border-color: var(--o-brand-primary, #875a7b);
+    }
+}
