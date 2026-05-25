@@ -69,8 +69,8 @@ _BUSINESS_MODEL_PREFIXES = (
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are a structured-query generator for Odoo 19.
-Given a natural-language request, pick the best model from the catalog below and
-respond with a single JSON object. Use ONLY fields that appear in the catalog.
+Read the COMPLETE user request from start to finish — every keyword matters.
+Then respond with a single JSON object. Use ONLY fields that appear in the catalog.
 
 Today's date: {today}
 Last 90 days start: {date_90d}
@@ -80,8 +80,9 @@ Current year start: {year_start}
 {model_catalog}
 ========================
 
-Required JSON shape:
+Required JSON shape — include ALL fields, especially "reasoning":
 {{
+  "reasoning": "<step-by-step: 1) intent (list/aggregate/trend/rank)? 2) model from glossary? 3) ALL dimensions (time + entity)? 4) domain filters? 5) chart type?>",
   "model": "<model technical name from catalog>",
   "domain": [<Odoo domain tuples, e.g. ["state","=","sale"]>],
   "fields": ["<field_name>", ...],
@@ -92,66 +93,119 @@ Required JSON shape:
   "chart_type": "bar|line|pie|doughnut|none"
 }}
 
-CRITICAL RULES:
+=== TERM → MODEL GLOSSARY ===
+Map user vocabulary to the correct model + mandatory domain filters:
+  "customers" / "clients"      → res.partner,    domain must include: [["customer_rank",">",0]]
+  "orders" / "sales"           → sale.order,     domain must include: [["state","in",["sale","done"]]]
+  "quotations" / "drafts"      → sale.order,     domain must include: [["state","in",["draft","sent"]]]
+  "invoices" / "revenue"       → account.move,   domain must include: [["move_type","=","out_invoice"],["state","=","posted"]]
+  "all invoices" (any state)   → account.move,   domain must include: [["move_type","=","out_invoice"]]
+  "bills" / "vendor invoices"  → account.move,   domain must include: [["move_type","=","in_invoice"],["state","=","posted"]]
+  "opportunities" / "pipeline" → crm.lead,       domain must include: [["type","=","opportunity"],["active","=",true]]
+  "leads" (unqualified)        → crm.lead,       domain must include: [["type","=","lead"],["active","=",true]]
+  "lost deals" / "lost leads"  → crm.lead,       domain must include: [["active","=",false],["probability","=",0]]
+  "won deals" / "closed won"   → crm.lead,       domain must include: [["active","=",false],["probability","=",100]]
+  "delivery orders" / "shipments" → stock.picking, domain: [["picking_type_code","=","outgoing"]]
+  "receipts" / "incoming"      → stock.picking,  domain: [["picking_type_code","=","incoming"]]
+  "low stock" / "reorder"      → stock.warehouse.orderpoint, domain: []
+  "employees" / "staff"        → hr.employee,    domain must include: [["active","=",true]]
+  "products" (catalog)         → product.template
+  "products" (revenue/qty)     → sale.order.line, domain: [["order_id.state","=","sale"]]
+
+=== ODOO DOMAIN SYNTAX ===
+Domains are lists of 3-element arrays: [["field", "operator", "value"], ...]
+Valid operators: "=", "!=", ">", ">=", "<", "<=", "in", "not in", "like", "ilike", "=like"
+Booleans: [["active","=",false]]  — JSON uses lowercase true/false
+Many2one: [["partner_id","=",42]] or dotted path in DOMAIN only: [["order_id.state","=","sale"]]
+Dates: [["date_order",">=","2025-01-01"]]  — always ISO format strings
+AND is implicit (default). OR needs explicit: ["|", ["field","=",1], ["field","=",2]]
+NEVER generate SQL (WHERE, JOIN, SELECT). ONLY Odoo domain tuple syntax.
+
+=== READ_GROUP LIMITATIONS ===
+When using groupby + measures (_read_group), these constraints apply:
+- CANNOT group by a dotted/related path: NO groupby: ["partner_id.country_id"].
+  Only use direct fields on the chosen model for groupby (e.g. "partner_id", "product_id").
+- CAN filter by dotted path in domain: [["order_id.state","=","sale"]] is valid.
+- CANNOT aggregate a field from a related model. Only aggregate direct fields.
+- For cross-model reports: choose the model that OWNS the numeric field you need to sum.
+  Example: revenue by product → use sale.order.line (owns price_subtotal), groupby product_id.
+  Example: revenue by category → use sale.order.line, groupby product_id (not product_id.categ_id).
+
+=== DIMENSION EXTRACTION (do this mentally before writing JSON) ===
+Read the full request and identify ALL dimensions present:
+  TIME dimension   → month/year/quarter/date mentioned? → groupby date_order:month or date_order:year
+  ENTITY dimension → customer/partner/product/employee/department mentioned? → groupby partner_id/product_id/department_id
+  MEASURE          → amount/revenue/count/quantity mentioned? → measures with agg=sum/count
+  FILTER           → this year/last 90 days/confirmed/paid? → domain
+  CHART            → trend over time → line; compare categories → bar; share/percent → pie
+
+RULE: If the request mentions BOTH a time period (month/year) AND an entity (customer/product),
+      put BOTH in groupby. Example: "monthly sales by customer" → groupby: ["date_order:month","partner_id"]
+
+=== CRITICAL RULES ===
 1. For "how many / count / total / revenue / grouped" questions → ALWAYS use measures.
-   Use agg="count" for counts, agg="sum" for amounts. Use groupby to segment.
+   Use agg="count" for counts, agg="sum" for amounts. Use groupby to segment by ALL named dimensions.
    Never leave groupby AND measures both empty for aggregate questions.
-2. For "show me details / list / top N records" questions → empty groupby, empty measures.
-   "top quotations / top orders / top invoices / highest" → fields must include: name, partner_id, amount_total, date_order. Order by amount_total desc.
-   "latest / most recent / last / when was" → fields must include: name, partner_id, date_order. Order by date_order desc, limit=1.
-   NEVER order by date for "top" questions — "top" always means highest value (amount_total desc).
+2. For "show me details / list / top N records" → empty groupby, empty measures.
+   "top / highest / best" → fields include name, partner_id, amount_total, date_order. Order by amount_total desc.
+   "latest / most recent / last" → include name, partner_id, date_order. Order by date_order desc.
    For sale.order and account.move flat queries: ALWAYS include partner_id and amount_total in fields.
    For crm.lead flat queries: ALWAYS include name, partner_id, expected_revenue, stage_id in fields.
    For hr.employee flat queries: ALWAYS include name, department_id, job_title in fields.
 3. Use ONLY field names from the catalog for the chosen model.
-4. MANDATORY domain filters (always include these):
-     "confirmed sale orders" / "orders":   [["state","=","sale"]]
-     "all sale orders" / "total orders" / "quotations and orders": [] (no filter, all states)
-     "quotations" only:                    [["state","in",["draft","sent"]]]
-     customer invoices (posted):           [["state","=","posted"],["move_type","=","out_invoice"]]
-     draft invoices:                       [["state","=","draft"],["move_type","=","out_invoice"]]
-     all invoices:                         [["move_type","=","out_invoice"]]
-     vendor bills:                         [["state","=","posted"],["move_type","=","in_invoice"]]
-     CRM leads (active only):              [["active","=",true]]
-     HR employees:                         [["active","=",true]]
-5. For "total revenue / total sales amount" on sale.order → use amount_total field with agg="sum", no groupby.
-6. SPECIAL QUERY PATTERNS (use exactly as specified):
-   "top categories / category revenue / revenue by category / treemap / category breakdown":
-     → model: sale.order.line, domain: [["order_id.state","=","sale"]],
-       groupby: ["product_id.categ_id"], measures: [{{"field":"price_subtotal","agg":"sum"}}], chart_type: "pie"
-   "top products / best selling products / products by revenue":
-     → model: sale.order.line, domain: [["order_id.state","=","sale"]],
-       groupby: ["product_id"], measures: [{{"field":"product_uom_qty","agg":"sum"}},{{"field":"price_subtotal","agg":"sum"}}], chart_type: "bar"
+4. MANDATORY domain filters — use the glossary above. In addition:
+     confirmed sale orders:            [["state","=","sale"]]
+     all sale orders incl. quotations: [] (no filter)
+     quotations only:                  [["state","in",["draft","sent"]]]
+     customer invoices (posted):       [["state","=","posted"],["move_type","=","out_invoice"]]
+     vendor bills (posted):            [["state","=","posted"],["move_type","=","in_invoice"]]
+     HR employees:                     [["active","=",true]]
+5. For "total revenue / total sales amount" → agg="sum" on amount_total, no groupby.
+6. SPECIAL QUERY PATTERNS:
+   "monthly sales by customer / sales per customer per month":
+     → model: sale.order, domain: [["state","=","sale"]],
+       groupby: ["date_order:month","partner_id"], measures: [{{"field":"amount_total","agg":"sum"}}], chart_type: "bar"
+   "sales by month / monthly sales trend / monthly total sales" (no customer):
+     → model: sale.order, domain: [["state","=","sale"]],
+       groupby: ["date_order:month"], measures: [{{"field":"amount_total","agg":"sum"}}], chart_type: "line"
    "revenue by customer / top customers by revenue":
      → model: sale.order, domain: [["state","=","sale"]],
        groupby: ["partner_id"], measures: [{{"field":"amount_total","agg":"sum"}}], chart_type: "bar"
-   "sales by month / monthly sales / sales trend":
-     → model: sale.order, domain: [["state","=","sale"]],
-       groupby: ["date_order:month"], measures: [{{"field":"amount_total","agg":"sum"}}], chart_type: "line"
-   "products needing reorder / low stock / reorder alerts / below reorder point / stockout risk":
+   "top categories / category revenue":
+     → model: sale.order.line, domain: [["order_id.state","=","sale"]],
+       groupby: ["product_id"], measures: [{{"field":"price_subtotal","agg":"sum"}}], chart_type: "pie"
+   "top products / best selling products / products by revenue":
+     → model: sale.order.line, domain: [["order_id.state","=","sale"]],
+       groupby: ["product_id"], measures: [{{"field":"product_uom_qty","agg":"sum"}},{{"field":"price_subtotal","agg":"sum"}}], chart_type: "bar"
+   "products needing reorder / low stock / reorder alerts":
      → model: stock.warehouse.orderpoint, domain: [],
        fields: ["product_id","qty_on_hand","product_min_qty","product_max_qty"],
        order: "qty_on_hand asc", chart_type: "none"
-   "delivery orders / to deliver / pending deliveries / outgoing shipments":
-     → model: stock.picking, domain: [["picking_type_id.code","=","outgoing"],["state","not in",["done","cancel"]]],
+   "delivery orders / pending deliveries / outgoing shipments":
+     → model: stock.picking, domain: [["picking_type_code","=","outgoing"],["state","not in",["done","cancel"]]],
        fields: ["name","partner_id","state","scheduled_date"], order: "scheduled_date asc", chart_type: "none"
-   "receipts / incoming shipments / purchase receipts / to receive":
-     → model: stock.picking, domain: [["picking_type_id.code","=","incoming"],["state","not in",["done","cancel"]]],
+   "receipts / incoming shipments / purchase receipts":
+     → model: stock.picking, domain: [["picking_type_code","=","incoming"],["state","not in",["done","cancel"]]],
        fields: ["name","partner_id","state","scheduled_date"], order: "scheduled_date asc", chart_type: "none"
-   NEVER use stock.quant or stock.move for revenue or category questions.
-   NEVER use sale.order for "delivery orders" — delivery orders are always stock.picking.
-7. chart_type: "bar" for grouped comparisons, "pie" for share/proportion/treemap, "line" for trends, "none" if no chart.
-8. DATE FILTERS — apply these when the user specifies or implies a time period:
-   "last 90 days" / "recent" / "this quarter" / no period specified for invoices/revenue:
-     → add ["invoice_date",">=","{date_90d}"] for account.move
-     → add ["date_order",">=","{date_90d}"] for sale.order
-   "this year" / "current year":
-     → add ["invoice_date",">=","{year_start}"] for account.move
-     → add ["date_order",">=","{year_start}"] for sale.order
-   "all time" / "total ever" / "since beginning":
-     → no date filter
-   DEFAULT (no time period mentioned): apply last-90-days filter for invoice/revenue queries.
-9. Respond with ONLY the JSON object — no markdown fences, no explanation."""
+   NOTE on stock.picking: use "picking_type_code" (not "move_type") for direction.
+   NEVER use sale.order for delivery orders — always stock.picking.
+   "lost CRM opportunities / lost leads / lost deals":
+     → model: crm.lead, domain: [["active","=",false],["probability","=",0]],
+       fields: ["name","partner_id","expected_revenue","stage_id"], chart_type: "none"
+   "won CRM opportunities / won deals / closed won":
+     → model: crm.lead, domain: [["active","=",false],["probability","=",100]],
+       fields: ["name","partner_id","expected_revenue","stage_id"], chart_type: "none"
+   NOTE on crm.lead: use active=false for archived (lost/won) leads. NEVER use is_rotting for lost/won.
+   is_rotting=true means stagnant/no-activity, NOT lost. Active pipeline: [["active","=",true]].
+7. chart_type: "bar" for grouped comparisons, "pie" for share/proportion, "line" for time trends, "none" if no chart.
+   When groupby has BOTH a time field AND a category field → use "bar" not "line".
+   When the result will be a single number (no groupby) → chart_type: "none".
+8. DATE FILTERS:
+   "last 90 days" / "recent" → ["date_order",">=","{date_90d}"] or ["invoice_date",">=","{date_90d}"]
+   "this year" / "current year" → ["date_order",">=","{year_start}"]
+   "all time" / "since beginning" → no date filter
+   DEFAULT (no period mentioned): apply last-90-days for invoice/revenue queries.
+9. Respond with ONLY the JSON object — no markdown, no explanation."""
 
 
 # ---------------------------------------------------------------------------
@@ -298,15 +352,154 @@ def build_query_spec(env, user_message: str, intent: str) -> dict | None:
             env,
             messages,
             model_role="reasoner",
-            max_tokens=600,
+            max_tokens=700,
             temperature=0.0,
             response_format={"type": "json_object"},
         )
-        spec = json.loads(raw)
-        return _validate_spec(env, spec, set(available.keys()))
+        raw_spec = json.loads(raw)
+        # Extract and log CoT reasoning before validation (never stored, just logged)
+        reasoning = raw_spec.pop("reasoning", None)
+        if reasoning:
+            _logger.info(
+                "ORM reasoning for '%s...': %s",
+                user_message[:40],
+                reasoning[:300],
+            )
+        return _validate_spec(env, raw_spec, set(available.keys()))
     except Exception as exc:
         _logger.warning("Query spec generation failed: %s", exc)
         return None
+
+
+_DOMAIN_CORRECTIONS: dict[str, dict[str, str]] = {
+    # LLMs confuse stock.picking's "move_type" (Shipping Policy) with direction.
+    # The correct stored field for outgoing/incoming/internal is picking_type_code.
+    "stock.picking": {"move_type": "picking_type_code"},
+}
+
+# Domain fields to DROP entirely for specific models (wrong field, no valid replacement).
+# The validator already drops unknown fields; this catches VALID but wrong ones.
+_DOMAIN_DROPS: dict[str, set[str]] = {
+    # LLMs use is_rotting (stagnant) instead of active=False for lost/won CRM leads.
+    # Drop is_rotting entirely — the system prompt now provides the correct pattern.
+    "crm.lead": {"is_rotting"},
+}
+
+# For flat (detail) queries with no groupby/measures, guarantee these fields are present.
+# Fixes 8B model omitting requested fields from the fields array despite mentioning them in reasoning.
+_DEFAULT_FLAT_FIELDS: dict[str, list[str]] = {
+    "hr.employee":              ["name", "department_id", "job_title"],
+    "crm.lead":                 ["name", "partner_id", "expected_revenue", "stage_id"],
+    "sale.order":               ["name", "partner_id", "amount_total", "state", "date_order"],
+    "account.move":             ["name", "partner_id", "amount_total", "state", "invoice_date"],
+    "stock.picking":            ["name", "partner_id", "state", "scheduled_date"],
+    "purchase.order":           ["name", "partner_id", "amount_total", "state", "date_order"],
+    "stock.warehouse.orderpoint": ["product_id", "qty_on_hand", "product_min_qty", "product_max_qty"],
+}
+
+
+def _unquote_domain_token(v):
+    """Strip double-JSON-encoding from a domain token.
+
+    Small LLMs sometimes emit `"\"sale\""` (double-encoded) which makes
+    `state = '"sale"'` match zero rows. Recurses into lists for `in`/`not in` values.
+    """
+    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        return v[1:-1]
+    if isinstance(v, (list, tuple)):
+        return [_unquote_domain_token(x) for x in v]
+    return v
+
+
+def _autofix_domain(domain) -> list:
+    """Apply LLM-output auto-fixes to a raw domain before field validation.
+
+    Handles the most common small-LLM mistakes without rejecting the whole spec:
+      A. Whole domain as JSON string → parse it
+      B. Flat unwrapped triple (["state","=","sale"] not [["state","=","sale"]]) → rewrap
+      C. Dict-format item ({"field":..,"operator":..,"value":..}) → convert to triple
+      D. 2-element item (["active", True]) → insert "=" operator
+      E. Backtick-wrapped operator (`=` → =)
+      F. Double-JSON-encoded string values ("\"sale\"" → "sale")
+    """
+    if domain is None:
+        return []
+
+    # A — whole domain sent as a JSON-encoded string
+    if isinstance(domain, str):
+        try:
+            domain = json.loads(domain)
+        except (ValueError, TypeError):
+            return []
+
+    if not isinstance(domain, (list, tuple)):
+        return []
+
+    # B — flat unwrapped triple: first element is a non-operator string, second is also a string
+    if (
+        len(domain) >= 3
+        and isinstance(domain[0], str)
+        and domain[0] not in ("&", "|", "!")
+        and isinstance(domain[1], str)
+    ):
+        domain = [list(domain[0:3])] + list(domain[3:])
+
+    result = []
+    for item in domain:
+        # Logical operators pass through
+        if isinstance(item, str) and item in ("&", "|", "!"):
+            result.append(item)
+            continue
+
+        # A — item itself is a JSON-encoded string
+        if isinstance(item, str) and item.strip().startswith("["):
+            try:
+                item = json.loads(item)
+            except (ValueError, TypeError):
+                _logger.debug("Skipping unparseable domain item %r", item[:80])
+                continue
+
+        # C — dict-format triple: {"field": .., "operator": .., "value": ..}
+        if isinstance(item, dict):
+            if {"field", "operator", "value"} <= set(item):
+                item = [item["field"], item["operator"], item["value"]]
+            elif len(item) == 1:
+                k, v = next(iter(item.items()))
+                item = [k, "=", v]
+            else:
+                _logger.debug("Skipping unrecognised dict domain item %r", item)
+                continue
+
+        if not isinstance(item, (list, tuple)):
+            _logger.debug("Skipping non-list domain item %r", item)
+            continue
+
+        # D — 2-element item: ["active", True] → ["active", "=", True]
+        if len(item) == 2 and isinstance(item[0], str):
+            item = [item[0], "=", item[1]]
+
+        if len(item) != 3:
+            _logger.debug("Skipping malformed domain item %r", item)
+            continue
+
+        field, op, value = item[0], item[1], item[2]
+
+        # E — backtick-wrapped operator: `=` → =
+        if isinstance(op, str) and len(op) >= 2 and op[0] == "`" and op[-1] == "`":
+            op = op[1:-1]
+
+        # F — double-JSON-encoded string values
+        field = _unquote_domain_token(field)
+        op = _unquote_domain_token(op) if isinstance(op, str) else op
+        value = _unquote_domain_token(value)
+
+        if not isinstance(field, str) or not field:
+            _logger.debug("Skipping domain item with non-string field %r", field)
+            continue
+
+        result.append([field, op, value])
+
+    return result
 
 
 def _validate_spec(env, spec: dict, allowed_model_names: set[str]) -> dict | None:
@@ -320,23 +513,37 @@ def _validate_spec(env, spec: dict, allowed_model_names: set[str]) -> dict | Non
         _logger.warning("Model %r not in registry", model_name)
         return None
 
-    all_fields = env[model_name].fields_get()
+    all_fields = env[model_name].fields_get(attributes=["string", "type", "store", "relation"])
+    _corrections = _DOMAIN_CORRECTIONS.get(model_name, {})
+    _drops = _DOMAIN_DROPS.get(model_name, set())
+    # Stored fields can be used in ORDER BY and search_read; computed/non-stored cannot
+    _stored_fields = {f for f, info in all_fields.items() if info.get("store", True)}
 
-    # validate domain
-    domain = spec.get("domain", [])
+    # validate domain — auto-fix first, then field-validate
+    raw_domain = spec.get("domain", [])
+    autofixed = _autofix_domain(raw_domain)
     clean_domain = []
-    for item in domain:
+    for item in autofixed:
         if isinstance(item, str) and item in ("&", "|", "!"):
             clean_domain.append(item)
             continue
         if not isinstance(item, (list, tuple)) or len(item) != 3:
             _logger.debug("Skipping malformed domain item %r", item)
             continue
-        field_path = str(item[0]).split(".")[0]  # support dotted paths like partner_id.country_id
+        field_name = str(item[0])
+        # Apply model-specific corrections (e.g. move_type → picking_type_code on stock.picking)
+        corrected = _corrections.get(field_name.split(".")[0])
+        if corrected:
+            _logger.debug("Correcting domain field %r → %r on %s", field_name, corrected, model_name)
+            field_name = corrected
+        field_path = field_name.split(".")[0]
         if field_path not in all_fields:
-            _logger.warning("Domain field %r not on %s — dropping", item[0], model_name)
+            _logger.warning("Domain field %r not on %s — dropping", field_name, model_name)
             continue
-        clean_domain.append(list(item))
+        if field_path in _drops:
+            _logger.debug("Dropping blacklisted domain field %r on %s", field_path, model_name)
+            continue
+        clean_domain.append([field_name, item[1], item[2]])
 
     # validate groupby
     groupby = []
@@ -361,24 +568,37 @@ def _validate_spec(env, spec: dict, allowed_model_names: set[str]) -> dict | Non
             agg = "sum"
         measures.append({"field": field_name, "agg": agg})
 
-    # validate explicit fields list (for flat/detail queries)
+    # validate explicit fields list — allow any readable field (stored or computed);
+    # search_read handles both, only ORDER BY requires stored fields
     fields = []
     for f in spec.get("fields", []):
         fname = str(f).split(".")[0]
         if fname in all_fields:
             fields.append(fname)
 
-    # validate order clause
+    # validate order clause — ORDER BY requires stored fields
     order = str(spec.get("order", "") or "").strip()
     if order:
         order_field = order.split()[0]
-        if order_field not in all_fields:
+        if order_field not in _stored_fields:
+            _logger.debug("Dropping non-stored order field %r on %s", order_field, model_name)
             order = ""
 
-    limit = min(int(spec.get("limit", 50)), _MAX_LIMIT_CAP)
+    raw_limit = spec.get("limit", 50)
+    try:
+        limit = min(int(raw_limit or 50), _MAX_LIMIT_CAP)
+    except (TypeError, ValueError):
+        limit = 50
     chart_type = spec.get("chart_type", "none")
     if chart_type not in ("bar", "line", "pie", "doughnut", "none"):
         chart_type = "none"
+
+    # For flat detail queries (no groupby, no measures), ensure key fields are present.
+    # Compensates for smaller LLMs that mention fields in reasoning but omit them from spec.
+    if not groupby and not measures:
+        for default_field in _DEFAULT_FLAT_FIELDS.get(model_name, []):
+            if default_field not in fields and default_field in all_fields:
+                fields.append(default_field)
 
     return {
         "model": model_name,
@@ -400,8 +620,20 @@ def execute_query(env, spec: dict) -> dict[str, Any]:
     """
     Execute a validated spec. Uses _read_group for aggregates, search_read for flat lists.
     """
-    Model = env[spec["model"]]
+    model_name = spec["model"]
     domain = spec["domain"]
+
+    # Odoo silently adds active=True to all queries unless active_test=False is set.
+    # If the domain explicitly filters on active (e.g. lost/archived records), bypass it.
+    has_active_filter = any(
+        isinstance(d, (list, tuple)) and len(d) >= 1 and str(d[0]).split(".")[0] == "active"
+        for d in domain
+    )
+    if has_active_filter:
+        Model = env[model_name].with_context(active_test=False)
+    else:
+        Model = env[model_name]
+
     groupby = spec["groupby"]
     measures = spec["measures"]
     limit = spec["limit"]

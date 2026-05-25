@@ -6,6 +6,9 @@ take effect immediately without a server restart.
 """
 import json
 import logging
+import re
+import threading
+import time
 from collections.abc import Generator
 from typing import Any
 
@@ -13,13 +16,46 @@ import requests
 
 _logger = logging.getLogger(__name__)
 
-_DEFAULT_LOCAL_URL = "http://192.168.0.162:8001/v1"
-_DEFAULT_LOCAL_MODEL = "gemma4"
-_DEFAULT_ROUTER_MODEL = "llama-3.1-8b-instant"
-_DEFAULT_REASONER_MODEL = "llama-3.3-70b-versatile"
+_DEFAULT_LOCAL_URL = "http://localhost:11434/v1"   # Ollama default endpoint
+_DEFAULT_LOCAL_MODEL = "mistral:latest"          # Chat / streaming responses
+_DEFAULT_ROUTER_MODEL = "tinyllama:latest"       # Fast intent routing + summarization
+_DEFAULT_REASONER_MODEL = "qwen2.5-coder:7b"     # Structured JSON query generation (pull if missing)
 _DEFAULT_GROQ_URL = "https://api.groq.com/openai/v1"
 _TIMEOUT_CONNECT = 10
 _TIMEOUT_READ = 120
+
+# If the model goes silent mid-stream for this long, the watchdog thread closes
+# the connection. vLLM streaming ignores requests' read timeout past initial connect.
+_STREAM_IDLE_TIMEOUT_S = 180
+
+# Chat-template / reasoning-channel tokens that leak when vLLM's SSE parser
+# doesn't fully match the model's template (observed with vLLM + Gemma/gemma4
+# + hermes chat template). We strip these from the cumulative buffer so users
+# never see raw `<|channel|>thought<channel|>` wrappers in the chat bubble.
+_CHANNEL_OPEN = re.compile(r'<\|channel\|?>\s*\w+\s*(?:\n|\r\n)?', re.IGNORECASE)
+_CHANNEL_CLOSE = re.compile(r'<\|?channel\|>', re.IGNORECASE)
+_CHATML_TOKEN = re.compile(
+    r'<\|(?:im_start|im_end|start_header_id|end_header_id|eot_id|eos'
+    r'|endoftext|begin_of_text|end_of_text)\|>',
+    re.IGNORECASE,
+)
+_GENERIC_PIPE_TOKEN = re.compile(r'<\|/?[A-Za-z0-9_.:-]+\|>')
+
+
+def _strip_model_tokens(text: str) -> str:
+    """Strip vLLM/Gemma chat-template tokens from a cumulative streamed buffer.
+
+    Applied to the full accumulated text (not per-chunk) because markers often
+    straddle SSE chunk boundaries — e.g. `<|channel>` arrives in one chunk and
+    `thought` in the next.
+    """
+    if not text:
+        return ''
+    text = _CHANNEL_OPEN.sub('', text)
+    text = _CHANNEL_CLOSE.sub('', text)
+    text = _CHATML_TOKEN.sub('', text)
+    text = _GENERIC_PIPE_TOKEN.sub('', text)
+    return text
 
 
 def _get_params(env) -> dict[str, Any]:
@@ -135,14 +171,44 @@ def chat_completion_sync(
         payload["response_format"] = response_format
 
     url = f"{base_url}/chat/completions"
-    resp = requests.post(
-        url,
-        headers=_headers(api_key),
-        json=payload,
-        timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    # Retry up to 3 times on rate-limit (429) with exponential backoff
+    last_resp = None
+    for attempt in range(3):
+        resp = requests.post(
+            url,
+            headers=_headers(api_key),
+            json=payload,
+            timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
+        )
+        last_resp = resp
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 3))
+            wait = min(retry_after, 5)  # cap at 5s for fast fallback
+            _logger.warning("Rate limited by %s — retrying in %ds (attempt %d/3)", url, wait, attempt + 1)
+            if attempt < 2:
+                time.sleep(wait)
+                continue
+            # All retries exhausted — fall back to local model if available
+            local_url = params.get("chat_base_url", "").rstrip("/")
+            if local_url and local_url != base_url:
+                _logger.warning("Groq rate limit exhausted — falling back to local model for %s role", model_role)
+                fallback_payload = dict(payload, model=params["chat_model"])
+                fallback_url = f"{local_url}/chat/completions"
+                fb_resp = requests.post(
+                    fallback_url,
+                    headers=_headers(params["chat_api_key"]),
+                    json=fallback_payload,
+                    timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
+                )
+                fb_resp.raise_for_status()
+                fb_data = fb_resp.json()
+                try:
+                    return fb_data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError) as exc:
+                    raise ValueError(f"Unexpected fallback LLM response shape: {fb_data}") from exc
+        resp.raise_for_status()
+        break
+    data = last_resp.json()
     try:
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as exc:
@@ -156,20 +222,18 @@ def chat_completion_stream(
     temperature: float = 0.7,
 ) -> Generator[str, None, None]:
     """
-    Streaming completion. Yields token delta strings.
-    Uses the default (reasoner/local) model for final answers.
+    Streaming completion. Yields cleaned token delta strings.
 
-    Args:
-        env: Odoo environment
-        messages: list of {"role": str, "content": str} dicts
-        max_tokens: maximum tokens to generate
-        temperature: sampling temperature
+    Improvements over a naive implementation:
+    - Forces UTF-8 decoding on the response (prevents ISO-8859-1 mojibake on
+      curly quotes / em-dashes from endpoints that omit charset in Content-Type).
+    - Strips vLLM/Gemma chat-template tokens (`<|channel|>`, `<|im_end|>`, etc.)
+      from the cumulative buffer so they never appear in the chat bubble.
+    - Watchdog thread closes a stuck stream after _STREAM_IDLE_TIMEOUT_S of silence
+      (vLLM streaming bypasses requests' read timeout past the initial connect).
 
     Yields:
-        str: token delta text fragments
-
-    Raises:
-        requests.HTTPError: on non-2xx response
+        str: new cleaned characters since the last yield (delta, not full text).
     """
     params = _get_params(env)
     model = params["chat_model"]
@@ -180,36 +244,87 @@ def chat_completion_stream(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-
     url = f"{params['chat_base_url']}/chat/completions"
-    with requests.post(
-        url,
-        headers=_headers(params["chat_api_key"]),
-        json=payload,
-        stream=True,
-        timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
-    ) as resp:
-        resp.raise_for_status()
-        for raw_line in resp.iter_lines():
+
+    try:
+        resp = requests.post(
+            url,
+            headers=_headers(params["chat_api_key"]),
+            json=payload,
+            stream=True,
+            timeout=(_TIMEOUT_CONNECT, _STREAM_IDLE_TIMEOUT_S + 30),
+        )
+    except requests.exceptions.RequestException as exc:
+        _logger.warning("LLM stream connect failed (%s): %s", url, exc)
+        return
+
+    resp.raise_for_status()
+    # Force UTF-8 so curly quotes / em-dashes aren't decoded as ISO-8859-1 mojibake.
+    resp.encoding = "utf-8"
+
+    # Watchdog: close a silent stream after _STREAM_IDLE_TIMEOUT_S of inactivity.
+    last_progress = [time.monotonic()]
+    watchdog_stop = threading.Event()
+    watchdog_timed_out = [False]
+
+    def _watchdog():
+        while not watchdog_stop.is_set():
+            if watchdog_stop.wait(3):
+                return
+            if time.monotonic() - last_progress[0] > _STREAM_IDLE_TIMEOUT_S:
+                watchdog_timed_out[0] = True
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                return
+
+    wd = threading.Thread(target=_watchdog, name="ai-stream-watchdog", daemon=True)
+    wd.start()
+
+    # Accumulate full text so token-stripping regexes can match markers that
+    # straddle SSE chunk boundaries. Yield only the NEW cleaned characters.
+    accumulated = ""
+    last_clean_len = 0
+
+    try:
+        for raw_line in resp.iter_lines(decode_unicode=True):
+            last_progress[0] = time.monotonic()
             if not raw_line:
                 continue
-            line: str = (
-                raw_line.decode("utf-8")
-                if isinstance(raw_line, bytes)
-                else raw_line
-            )
+            line = raw_line.strip()
             if not line.startswith("data:"):
                 continue
-            data_str = line[5:].strip()
+            data_str = line[5:].lstrip()
             if data_str == "[DONE]":
-                return
+                break
             try:
                 chunk = json.loads(data_str)
-                delta = chunk["choices"][0]["delta"].get("content", "")
-                if delta:
-                    yield delta
+                piece = chunk["choices"][0]["delta"].get("content", "")
+                if not piece:
+                    continue
+                accumulated += piece
+                cleaned = _strip_model_tokens(accumulated)
+                if len(cleaned) > last_clean_len:
+                    yield cleaned[last_clean_len:]
+                    last_clean_len = len(cleaned)
             except (json.JSONDecodeError, KeyError, IndexError):
-                _logger.debug("Skipping unparseable SSE chunk: %s", data_str)
+                _logger.debug("Skipping unparseable SSE chunk: %s", data_str[:200])
+    except (requests.exceptions.RequestException, OSError) as exc:
+        if not watchdog_timed_out[0]:
+            _logger.warning("LLM stream interrupted: %s", exc)
+    finally:
+        watchdog_stop.set()
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+    if watchdog_timed_out[0]:
+        _logger.warning(
+            "LLM stream idle timeout after %ds — vLLM worker may be stuck",
+            _STREAM_IDLE_TIMEOUT_S,
+        )
 
 
 def ping(env) -> dict[str, Any]:

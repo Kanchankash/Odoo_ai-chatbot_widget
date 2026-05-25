@@ -241,6 +241,27 @@ function makeChatbotService({ env }) {
             let buffer = "";
             let finalMessageId = null;
             let chartSpec = null;
+            let tableData = null;
+            let suggestions = null;
+            let pendingTokens = "";
+            let rafId = null;
+            let lastFlush = 0;
+            const FLUSH_INTERVAL_MS = 80; // max ~12 DOM updates/sec during streaming
+
+            // Flush accumulated tokens to state at a throttled rate to prevent
+            // the browser from freezing when the LLM sends tokens rapidly.
+            const flushTokens = () => {
+                rafId = null;
+                if (!pendingTokens) return;
+                state.streamingContent += pendingTokens;
+                pendingTokens = "";
+                lastFlush = Date.now();
+                state.messages = state.messages.map((m) =>
+                    m.id === streamingMsgId
+                        ? { ...m, content: state.streamingContent }
+                        : m
+                );
+            };
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -265,20 +286,29 @@ function makeChatbotService({ env }) {
                     } else if (line === "") {
                         // dispatch frame
                         if (event === "token" && data !== null) {
-                            state.streamingContent += data;
-                            // update streaming bubble
-                            state.messages = state.messages.map((m) =>
-                                m.id === streamingMsgId
-                                    ? { ...m, content: state.streamingContent }
-                                    : m
-                            );
+                            pendingTokens += data;
+                            // Throttle DOM updates: flush immediately if interval elapsed,
+                            // otherwise schedule a deferred flush via rAF.
+                            if (Date.now() - lastFlush >= FLUSH_INTERVAL_MS) {
+                                if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+                                flushTokens();
+                            } else if (!rafId) {
+                                rafId = requestAnimationFrame(flushTokens);
+                            }
                         } else if (event === "done" && data) {
                             try {
                                 const parsed = JSON.parse(data);
                                 finalMessageId = parsed.message_id;
                                 chartSpec = parsed.chart_spec || null;
+                                tableData = parsed.table_data || null;
+                            } catch (_) {}
+                        } else if (event === "suggestions" && data) {
+                            try {
+                                const parsed = JSON.parse(data);
+                                suggestions = Array.isArray(parsed) ? parsed : null;
                             } catch (_) {}
                         } else if (event === "error" && data) {
+                            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
                             state.messages = state.messages.map((m) =>
                                 m.id === streamingMsgId
                                     ? { ...m, content: `⚠ ${data}`, isError: true, isStreaming: false }
@@ -290,6 +320,9 @@ function makeChatbotService({ env }) {
                     }
                 }
             }
+            // Flush any remaining tokens after stream ends
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+            flushTokens();
 
             // Finalize streaming message
             state.messages = state.messages.map((m) =>
@@ -299,6 +332,8 @@ function makeChatbotService({ env }) {
                           id: finalMessageId || m.id,
                           content: state.streamingContent,
                           chart_spec: chartSpec,
+                          table_data: tableData,
+                          suggestions: suggestions,
                           isStreaming: false,
                       }
                     : m

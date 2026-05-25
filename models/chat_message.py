@@ -38,6 +38,7 @@ class AiChatMessage(models.Model):
     tokens_in = fields.Integer(string="Input Tokens", default=0)
     tokens_out = fields.Integer(string="Output Tokens", default=0)
     chart_spec = fields.Text(string="Chart Spec (JSON)")
+    query_spec = fields.Text(string="Query Spec (JSON)")
     created_at = fields.Datetime(
         string="Created At",
         default=fields.Datetime.now,

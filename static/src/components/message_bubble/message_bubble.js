@@ -19,6 +19,46 @@ export class MessageBubble extends Component {
     get isAssistant() { return this.props.message.role === "assistant"; }
     get isStreaming() { return !!this.props.message.isStreaming; }
 
+    get hasSuggestions() {
+        const s = this.props.message.suggestions;
+        return !this.isStreaming && Array.isArray(s) && s.length > 0;
+    }
+
+    get hasTableData() {
+        const td = this.props.message.table_data;
+        return (
+            !this.isStreaming &&
+            td &&
+            Array.isArray(td.columns) && td.columns.length > 0 &&
+            Array.isArray(td.rows) && td.rows.length > 0
+        );
+    }
+
+    sendSuggestion(text) {
+        this.chatbot.sendMessage(text);
+    }
+
+    exportCSV() {
+        const td = this.props.message.table_data;
+        if (!td) return;
+        const escape = (v) => {
+            const s = v == null ? "" : String(v);
+            return s.includes(",") || s.includes('"') || s.includes("\n")
+                ? '"' + s.replace(/"/g, '""') + '"'
+                : s;
+        };
+        const lines = [td.columns, ...td.rows].map((row) => row.map(escape).join(","));
+        const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "odoo_export.csv";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     get chartSpec() {
         const spec = this.props.message.chart_spec;
         if (!spec) return null;
@@ -29,6 +69,15 @@ export class MessageBubble extends Component {
     get renderedContent() {
         const raw = this.props.message.content || "";
         if (!raw) return markup("");
+
+        // During streaming: skip the full markdown parser (it re-runs O(n) on every
+        // token and causes browser freeze on long responses). Show plain text with
+        // just newline → <br> conversion; full markdown renders once streaming ends.
+        if (this.isStreaming) {
+            return markup(
+                "<p>" + _escapeHtml(raw).replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>") + "</p>"
+            );
+        }
 
         let html = _escapeHtml(raw);
 

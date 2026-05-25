@@ -32,6 +32,26 @@
                 <t t-if="chartSpec">
                     <ChartRenderer config="chartSpec"/>
                 </t>
+
+                <!-- CSV download button (shown when table data is available) -->
+                <t t-if="hasTableData">
+                    <div class="o_chatbot_msg_actions">
+                        <button class="o_chatbot_export_btn" t-on-click="exportCSV" title="Download as CSV">
+                            <i class="fa fa-download" aria-hidden="true"/> CSV
+                        </button>
+                    </div>
+                </t>
+
+                <!-- Follow-up suggestion chips -->
+                <t t-if="hasSuggestions">
+                    <div class="o_chatbot_suggestions">
+                        <t t-foreach="message.suggestions" t-as="chip" t-key="chip_index">
+                            <button class="o_chatbot_chip" t-on-click="() => this.sendSuggestion(chip)">
+                                <t t-esc="chip"/>
+                            </button>
+                        </t>
+                    </div>
+                </t>
             </div>
         </div>
     </t>
